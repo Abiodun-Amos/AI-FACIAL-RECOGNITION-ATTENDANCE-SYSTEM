@@ -23,6 +23,11 @@ LOGS_DIR        = PROJECT_ROOT / "logs"
 DATABASE_PATH   = DATABASE_DIR / "attendance.db"
 TRAINER_PATH    = TRAINER_DIR / "trainer.yml"
 
+# ── Device location ────────────────────────────────────────────
+# This Orange Pi is physically deployed in this lecture hall.
+# Only sessions assigned to this hall will be considered active.
+CURRENT_HALL_NAME = "Electrical Hall 1"
+
 # ── Camera settings ────────────────────────────────────────────
 CAMERA_INDEX    = 0
 FRAME_WIDTH     = 1280

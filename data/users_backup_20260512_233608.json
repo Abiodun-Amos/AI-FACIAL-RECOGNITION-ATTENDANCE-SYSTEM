@@ -1,0 +1,16 @@
+[
+  {
+    "user_id": 1,
+    "name": "Abiodun Amos",
+    "matric_no": "EES/21/22/0011",
+    "user_level": 500,
+    "registered_date": "2026-05-12 21:08:48"
+  },
+  {
+    "user_id": 2,
+    "name": "Adelomo Adesuwa",
+    "matric_no": "EES/21/22/0056",
+    "user_level": 500,
+    "registered_date": "2026-05-12 21:10:30"
+  }
+]
