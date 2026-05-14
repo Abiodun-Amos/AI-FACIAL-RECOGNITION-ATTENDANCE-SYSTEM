@@ -46,8 +46,15 @@ LBPH_GRID_X          = 8
 LBPH_GRID_Y          = 8
 CONFIDENCE_THRESHOLD = 70   # below = recognized, above = intruder
 
-# ── Enrollment ─────────────────────────────────────────────────
-IMAGES_PER_USER      = 30
+# ── Enrollment — guided multi-pose capture ─────────────────────
+ENROLLMENT_POSES = [
+    ("FRONTAL", "Look STRAIGHT at the camera"),
+    ("LEFT",    "Slowly turn your head to your LEFT"),
+    ("RIGHT",   "Slowly turn your head to your RIGHT"),
+    ("UP",      "Tilt your head slightly UP"),
+    ("DOWN",    "Tilt your head slightly DOWN"),
+]
+IMAGES_PER_POSE = 7        # 5 poses x 7 = 35 samples per user
 
 # ── Ensure all directories exist on first run ──────────────────
 for d in [DATASET_DIR, TRAINER_DIR, INTRUDERS_DIR,

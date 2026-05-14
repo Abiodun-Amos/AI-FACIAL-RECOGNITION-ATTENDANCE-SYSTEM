@@ -17,6 +17,7 @@ import time
 
 from src import config, database
 from src.face_tracker import FaceTracker
+from src.face_utils import preprocess_face
 
 
 def load_recognizer():
@@ -76,8 +77,7 @@ def main():
         # ── Run LBPH on every detected face this frame ─────────────
         detections = []
         for (x, y, w, h) in faces:
-            face_crop = gray[y:y + h, x:x + w]
-            face_crop = cv2.resize(face_crop, config.FACE_IMG_SIZE)
+            face_crop = preprocess_face(gray, (x, y, w, h))
             user_id, confidence = recognizer.predict(face_crop)
             detections.append(((x, y, w, h), (user_id, confidence)))
 

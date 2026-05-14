@@ -22,6 +22,7 @@ from datetime import datetime
 from src import config, database
 from src.face_tracker import FaceTracker
 from src.session_manager import get_active_session, describe_session
+from src.face_utils import preprocess_face
 
 
 class SessionState:
@@ -126,8 +127,7 @@ def main():
         # LBPH predict per detected face
         detections = []
         for (x, y, w, h) in faces:
-            face_crop = gray[y:y + h, x:x + w]
-            face_crop = cv2.resize(face_crop, config.FACE_IMG_SIZE)
+            face_crop = preprocess_face(gray, (x, y, w, h))
             user_id, confidence = recognizer.predict(face_crop)
             detections.append(((x, y, w, h), (user_id, confidence)))
 
@@ -151,8 +151,23 @@ def main():
             if avg_conf < config.CONFIDENCE_THRESHOLD:
                 # ── RECOGNIZED ────────────────────────────────
                 user = users.get(user_id)
-                name = user["name"] if user else f"id={user_id}"
-                color  = (0, 255, 0)
+
+                if user is None:
+                    # Trainer label has no matching DB user (stale model).
+                    # Treat as unknown to be safe.
+                    color = (0, 0, 255)
+                    status_txt = "UNKNOWN (stale model)"
+                    label = f"id={user_id}  ({avg_conf:.1f})"
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                    cv2.rectangle(frame, (x, y - 28), (x + w, y), color, -1)
+                    cv2.putText(frame, label, (x + 4, y - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1)
+                    cv2.putText(frame, status_txt, (x, y + h + 22),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+                    continue
+
+                name = user["name"]
+                color = (0, 255, 0)
 
                 if active_session is None:
                     status_txt = "NO ACTIVE SESSION"
@@ -170,7 +185,7 @@ def main():
                               f"(L{active_session['course_level']})")
                 else:
                     # Correct level — log if not already logged for this session
-                    sid  = active_session["session_id"]
+                    sid   = active_session["session_id"]
                     sdate = active_session["session_date"]
                     sstatus = active_session["status"]   # PRESENT or LATE
                     key = (user_id, sid)
