@@ -40,7 +40,7 @@ def pick_session():
         return None
 
     all_sessions = []
-    for day in DAYS[:5]:    # Mon–Fri
+    for day in DAYS:    # Mon–Fri
         for s in database.get_sessions_for_hall_day(hall["hall_id"], day):
             all_sessions.append(s)
 

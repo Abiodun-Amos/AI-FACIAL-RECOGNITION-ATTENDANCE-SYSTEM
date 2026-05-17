@@ -54,8 +54,8 @@ def get_active_session(hall_id):
     today, current_time, day = _now()
 
     # Weekends are immediate-skip (your timetable is Mon–Fri)
-    if day in ("SAT", "SUN"):
-        return None
+    # if day in ("SAT", "SUN"):
+    #     return None
 
     # Pull every session for this hall on this day
     sessions = database.get_sessions_for_hall_day(hall_id, day)
@@ -89,6 +89,36 @@ def get_active_session(hall_id):
 
     return None
 
+def get_scheduled_session(hall_id):
+    """
+    Return the session whose scheduled window covers 'now' for this
+    hall — IGNORING cancellation. Used for intruder logging, which
+    follows the timetable window regardless of whether the lecturer
+    cancelled the class.
+
+    Returns the session dict (with 'session_date' added) or None if
+    the current time is outside every scheduled window (true
+    off-hours / break / unscheduled day).
+
+    Distinct from get_active_session(), which is cancellation-aware
+    and governs ATTENDANCE.
+    """
+    today, current_time, day = _now()
+
+    sessions = database.get_sessions_for_hall_day(hall_id, day)
+    if not sessions:
+        return None
+
+    for s in sessions:
+        start = _parse_hhmm(s["start_time"])
+        end   = _parse_hhmm(s["end_time"])
+        if start <= current_time <= end:
+            # NOTE: deliberately NO cancellation check here.
+            return {
+                **s,
+                "session_date": today,
+            }
+    return None
 
 def describe_session(session):
     """Human-readable one-liner, used for HUD / logs."""

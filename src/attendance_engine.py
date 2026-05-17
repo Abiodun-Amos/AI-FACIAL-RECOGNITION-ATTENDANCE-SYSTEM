@@ -1,12 +1,10 @@
 """
-Attendance Engine — Phase 3B (session-aware)
-=============================================
-Adds on top of Phase 3A:
-  • Hall-based session lookup (only sessions for this device's hall)
-  • PRESENT / LATE status based on grace_minutes
-  • Cancellation enforcement (no logging on cancelled dates)
-  • Level validation (wrong-level students are NOT logged)
-  • Per-session duplicate prevention (one log per user per session per date)
+Attendance Engine — Phase 3B (backend-agnostic)
+================================================
+Runs on EITHER recognition backend via config.RECOGNITION_BACKEND.
+All Phase 3B logic (sessions, PRESENT/LATE, cancellations, level
+validation, intruders, duplicate prevention) is unchanged — only
+the recognition call is now abstracted behind the backend adapter.
 
 Press 'q' to quit.
 
@@ -21,14 +19,14 @@ from datetime import datetime
 
 from src import config, database
 from src.face_tracker import FaceTracker
-from src.session_manager import get_active_session, describe_session
-from src.face_utils import preprocess_face
+from src.session_manager import get_active_session, get_scheduled_session, describe_session
+from src.recognizer_backend import get_backend, bbox_of
+from src.liveness import LivenessChecker
 
 
 class SessionState:
-    """In-memory state for one run of the engine."""
     def __init__(self):
-        self.logged_users      = {}   # (user_id, session_id) -> True
+        self.logged_users      = {}
         self.logged_tracks     = set()
         self.recent_intruder_t = 0
         self.intruder_cooldown = 10
@@ -38,58 +36,47 @@ class SessionState:
         self.count_wrong_level = 0
 
 
-def load_recognizer():
-    if not config.TRAINER_PATH.exists():
-        print(f"[ERROR] No trained model at {config.TRAINER_PATH}")
-        print("        Run: python -m src.train_model")
-        sys.exit(1)
-    rec = cv2.face.LBPHFaceRecognizer_create()
-    rec.read(str(config.TRAINER_PATH))
-    return rec
-
-
 def build_user_lookup():
     return {u["user_id"]: u for u in database.get_all_users()}
 
 
-def save_intruder_snapshot(frame, bbox, confidence):
+def save_intruder_snapshot(frame, bbox, score):
     x, y, w, h = bbox
     pad_x = int(w * 0.3); pad_y = int(h * 0.3)
-    x0 = max(0, x - pad_x)
-    y0 = max(0, y - pad_y)
+    x0 = max(0, x - pad_x); y0 = max(0, y - pad_y)
     x1 = min(frame.shape[1], x + w + pad_x)
     y1 = min(frame.shape[0], y + h + pad_y)
-    snapshot = frame[y0:y1, x0:x1]
+    snap = frame[y0:y1, x0:x1]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    filename = f"intruder_{ts}.jpg"
-    path = config.INTRUDERS_DIR / filename
-    cv2.imwrite(str(path), snapshot)
+    path = config.INTRUDERS_DIR / f"intruder_{ts}.jpg"
+    cv2.imwrite(str(path), snap)
     return str(path)
+
+
+def is_recognized(backend, score):
+    """Direction-aware acceptance check."""
+    if backend.kind == "LBPH_DISTANCE":
+        return score < backend.threshold      # lower = better
+    return score >= backend.threshold         # DNN: higher = better
 
 
 def main():
     print("\n" + "=" * 60)
-    print("  ATTENDANCE ENGINE — Phase 3B (session-aware)")
+    print(f"  ATTENDANCE ENGINE — backend: {config.RECOGNITION_BACKEND}")
     print("=" * 60)
 
     database.init_db()
     hall = database.get_hall_by_name(config.CURRENT_HALL_NAME)
     if hall is None:
         print(f"[ERROR] Hall '{config.CURRENT_HALL_NAME}' not in DB.")
-        print("        Run: python -m src.migrate_schema")
         sys.exit(1)
-
     hall_id = hall["hall_id"]
-    print(f"[OK] Operating in hall: {config.CURRENT_HALL_NAME} (id={hall_id})")
+    print(f"[OK] Hall: {config.CURRENT_HALL_NAME} (id={hall_id})")
 
-    recognizer = load_recognizer()
-    users      = build_user_lookup()
-    tracker    = FaceTracker()
-    state      = SessionState()
-
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    )
+    backend = get_backend()
+    users   = build_user_lookup()
+    tracker = FaceTracker()
+    state   = SessionState()
 
     cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.FRAME_WIDTH)
@@ -98,66 +85,89 @@ def main():
         print("[ERROR] Cannot open camera.")
         sys.exit(1)
 
-    print(f"[OK] {len(users)} enrolled user(s) loaded.")
-    print("[INFO] Press 'q' to stop.\n")
+    print(f"[OK] {len(users)} enrolled user(s). Press 'q' to stop.\n")
 
     prev_t = time.time()
     last_session_check = 0
-    active_session = None    # refreshed every 5 seconds
+    active_session = None
+    scheduled_session = None
 
     while True:
         ret, frame = cap.read()
-        if not ret: continue
-
+        if not ret:
+            continue
         now_t = time.time()
 
-        # Refresh session status periodically (no need every frame)
         if now_t - last_session_check > 5:
-            active_session = get_active_session(hall_id)
+            active_session = get_active_session(hall_id)        # cancellation-aware → attendance
+            scheduled_session = get_scheduled_session(hall_id)  # window-only → intruder logging
             last_session_check = now_t
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=config.HAAR_SCALE_FACTOR,
-            minNeighbors=config.HAAR_MIN_NEIGHBORS,
-            minSize=config.HAAR_MIN_SIZE,
-        )
 
-        # LBPH predict per detected face
+        # Backend-specific detection (Haar for LBPH, YuNet for DNN)
+        faces = backend.detect(frame, gray)
+
         detections = []
-        for (x, y, w, h) in faces:
-            face_crop = preprocess_face(gray, (x, y, w, h))
-            user_id, confidence = recognizer.predict(face_crop)
-            detections.append(((x, y, w, h), (user_id, confidence)))
+        for face in faces:
+            uid, score, kind = backend.identify(frame, gray, face)
+            bbox = bbox_of(backend, face)
+            # Pack for the tracker: use -1 sentinel for "unknown"
+            packed_id = uid if uid is not None else -1
+            detections.append((bbox, (packed_id, score)))
 
         tracks = tracker.update(detections)
 
-        # ── Persistence + drawing per track ─────────────────
         for track in tracks:
+            # Attach a liveness checker to this track on first sight
+            if config.LIVENESS_ENABLED:
+                if not hasattr(track, "liveness"):
+                    track.liveness = LivenessChecker()
+                track.liveness.update(gray, track.bbox)
             x, y, w, h = track.bbox
             smoothed = track.smoothed_prediction()
 
             if smoothed is None:
                 color = (255, 255, 0)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(frame, f"Analysing... ({len(track.history)}/4)",
+                cv2.putText(frame, f"Analysing... ({len(track.history)}/5)",
                             (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX,
                             0.55, color, 2)
                 continue
 
-            user_id, avg_conf = smoothed
+            voted_id, avg_score = smoothed
 
-            if avg_conf < config.CONFIDENCE_THRESHOLD:
-                # ── RECOGNIZED ────────────────────────────────
-                user = users.get(user_id)
+            if voted_id == -1:
+                # ── INTRUDER ──
+                color = (0, 0, 255)
+                label = f"UNKNOWN ({avg_score:.3f})"
 
+                # Intruder logging is gated on the SCHEDULED window
+                # (cancellation-blind), NOT on active_session.
+                # → logs during any timetabled slot, even if cancelled
+                # → silent during true off-hours / breaks / unscheduled days
+                if scheduled_session is not None:
+                    status_txt = "INTRUDER"
+                    cooled = (now_t - state.recent_intruder_t) > state.intruder_cooldown
+                    if track.track_id not in state.logged_tracks and cooled:
+                        snap = save_intruder_snapshot(frame, track.bbox, avg_score)
+                        sid   = scheduled_session["session_id"]
+                        sdate = scheduled_session["session_date"]
+                        database.log_intruder(snap, avg_score, sid, sdate, hall_id)
+                        state.logged_tracks.add(track.track_id)
+                        state.recent_intruder_t = now_t
+                        state.count_intruder += 1
+                        print(f"[ALERT] {datetime.now():%H:%M:%S} INTRUDER "
+                              f"→ {snap} (score {avg_score:.3f})")
+                else:
+                    # Outside any scheduled window — detected but NOT logged
+                    status_txt = "UNKNOWN (off-hours, not logged)"
+            else:
+                user = users.get(voted_id)
                 if user is None:
-                    # Trainer label has no matching DB user (stale model).
-                    # Treat as unknown to be safe.
                     color = (0, 0, 255)
-                    status_txt = "UNKNOWN (stale model)"
-                    label = f"id={user_id}  ({avg_conf:.1f})"
+                    status_txt = "UNKNOWN (stale)"
+                    label = f"id={voted_id} ({avg_score:.3f})"
                     cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
                     cv2.rectangle(frame, (x, y - 28), (x + w, y), color, -1)
                     cv2.putText(frame, label, (x + 4, y - 8),
@@ -172,72 +182,86 @@ def main():
                 if active_session is None:
                     status_txt = "NO ACTIVE SESSION"
                 elif user["user_level"] != active_session["course_level"]:
-                    # Wrong-level student — do not log
                     status_txt = f"WRONG LEVEL (L{user['user_level']})"
-                    color = (0, 165, 255)  # orange
-                    key = (user_id, "wrong-level-warn")
+                    color = (0, 165, 255)
+                    key = (voted_id, "wl")
                     if key not in state.logged_users:
                         state.logged_users[key] = True
                         state.count_wrong_level += 1
-                        print(f"[WARN] {datetime.now().strftime('%H:%M:%S')} "
-                              f"WRONG-LEVEL → {name} (L{user['user_level']}) "
-                              f"in {active_session['course_code']} "
+                        print(f"[WARN] {datetime.now():%H:%M:%S} WRONG-LEVEL "
+                              f"→ {name} (L{user['user_level']}) in "
+                              f"{active_session['course_code']} "
                               f"(L{active_session['course_level']})")
                 else:
-                    # Correct level — log if not already logged for this session
-                    sid   = active_session["session_id"]
-                    sdate = active_session["session_date"]
-                    sstatus = active_session["status"]   # PRESENT or LATE
-                    key = (user_id, sid)
+                    sid     = active_session["session_id"]
+                    sdate   = active_session["session_date"]
+                    sstatus = active_session["status"]
+                    key = (voted_id, sid)
 
-                    if (key not in state.logged_users
-                            and not database.has_attended_session(user_id, sid, sdate)):
+                    already_logged = (
+                        key in state.logged_users
+                        or database.has_attended_session(voted_id, sid, sdate)
+                    )
+
+                    if already_logged:
+                        status_txt = f"{sstatus} ✓"
+                    else:
+                        # ── Liveness gate (anti-spoofing) ──
+                        if config.LIVENESS_ENABLED:
+                            is_live, mscore = track.liveness.is_live()
+                            print(f"[LIVENESS] track={track.track_id} "
+                                  f"is_live={is_live} score={mscore}")
+                            if is_live is None:
+                                # Still sampling motion — don't log yet
+                                color = (255, 255, 0)
+                                status_txt = "Liveness check..."
+                                label = f"{name} (checking)"
+                                cv2.rectangle(frame, (x, y), (x + w, y + h),
+                                              color, 2)
+                                cv2.rectangle(frame, (x, y - 28), (x + w, y),
+                                              color, -1)
+                                cv2.putText(frame, label, (x + 4, y - 8),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                            (0, 0, 0), 1)
+                                cv2.putText(frame, status_txt, (x, y + h + 22),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                            color, 2)
+                                continue
+                            if is_live is False:
+                                # Static → likely photo spoof. Refuse.
+                                color = (0, 0, 255)
+                                status_txt = "SPOOF? (static)"
+                                label = f"{name} STATIC ({mscore:.1f})"
+                                cv2.rectangle(frame, (x, y), (x + w, y + h),
+                                              color, 2)
+                                cv2.rectangle(frame, (x, y - 28), (x + w, y),
+                                              color, -1)
+                                cv2.putText(frame, label, (x + 4, y - 8),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                            (0, 0, 0), 1)
+                                cv2.putText(frame, status_txt, (x, y + h + 22),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                                            color, 2)
+                                continue
+                            # is_live is True → fall through and log
+
+                        # ── Passed all gates → log attendance ──
                         database.log_attendance(
-                            user_id=user_id,
-                            confidence=avg_conf,
-                            session_id=sid,
-                            session_date=sdate,
+                            user_id=voted_id, confidence=avg_score,
+                            session_id=sid, session_date=sdate,
                             course_id=active_session["course_id"],
-                            hall_id=hall_id,
-                            status=sstatus,
-                        )
+                            hall_id=hall_id, status=sstatus)
                         state.logged_users[key] = True
                         if sstatus == "PRESENT":
                             state.count_present += 1
                         else:
                             state.count_late += 1
-                        print(f"[LOG] {datetime.now().strftime('%H:%M:%S')} "
-                              f"{sstatus:<7} → {name} "
-                              f"({active_session['course_code']}, "
-                              f"conf {avg_conf:.1f})")
+                        print(f"[LOG] {datetime.now():%H:%M:%S} {sstatus:<7} "
+                              f"→ {name} ({active_session['course_code']}, "
+                              f"score {avg_score:.3f})")
                         status_txt = sstatus
-                    else:
-                        status_txt = f"{sstatus} ✓"
 
-                label = f"{name}  ({avg_conf:.1f})"
-            else:
-                # ── INTRUDER ──────────────────────────────────
-                color = (0, 0, 255)
-                status_txt = "INTRUDER"
-                label = f"UNKNOWN  ({avg_conf:.1f})"
-
-                cooled = (now_t - state.recent_intruder_t) > state.intruder_cooldown
-                if track.track_id not in state.logged_tracks and cooled:
-                    snap_path = save_intruder_snapshot(frame, track.bbox, avg_conf)
-                    sid = active_session["session_id"] if active_session else None
-                    sdate = active_session["session_date"] if active_session else None
-                    database.log_intruder(
-                        image_path=snap_path,
-                        confidence=avg_conf,
-                        session_id=sid,
-                        session_date=sdate,
-                        hall_id=hall_id,
-                    )
-                    state.logged_tracks.add(track.track_id)
-                    state.recent_intruder_t = now_t
-                    state.count_intruder += 1
-                    print(f"[ALERT] {datetime.now().strftime('%H:%M:%S')} "
-                          f"INTRUDER → {snap_path} (conf {avg_conf:.1f})")
+                label = f"{name} ({avg_score:.3f})"
 
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             cv2.rectangle(frame, (x, y - 28), (x + w, y), color, -1)
@@ -246,37 +270,38 @@ def main():
             cv2.putText(frame, status_txt, (x, y + h + 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-        # ── HUD ─────────────────────────────────────────────
+        # HUD
         fps = 1.0 / (now_t - prev_t) if now_t != prev_t else 0
         prev_t = now_t
-
         sess_line = describe_session(active_session)
-        sess_color = (0, 255, 0) if active_session else (100, 100, 100)
-
+        if active_session:
+            sess_color = (0, 255, 0)            # green: attendance live
+        elif scheduled_session:
+            sess_line = f"SCHEDULED (cancelled?) — intruder-logging ON"
+            sess_color = (0, 165, 255)          # orange: window open, no attendance
+        else:
+            sess_color = (120, 120, 120)        # gray: fully off
         cv2.rectangle(frame, (0, 0), (frame.shape[1], 55), (0, 0, 0), -1)
         cv2.putText(frame, sess_line, (10, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, sess_color, 2)
         cv2.putText(frame,
-                    f"FPS:{fps:.1f}  Tracks:{len(tracks)}  "
-                    f"P:{state.count_present}  L:{state.count_late}  "
-                    f"I:{state.count_intruder}  WL:{state.count_wrong_level}",
+                    f"[{backend.name}] FPS:{fps:.1f}  Tracks:{len(tracks)}  "
+                    f"P:{state.count_present} L:{state.count_late} "
+                    f"I:{state.count_intruder} WL:{state.count_wrong_level}",
                     (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
         cv2.putText(frame, "Press 'q' to stop", (10, frame.shape[0] - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-        cv2.imshow("Attendance Engine - Phase 3B", frame)
+        cv2.imshow(f"Attendance Engine [{backend.name}]", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
-
     print("\n" + "=" * 60)
-    print("  SESSION ENDED")
-    print(f"  PRESENT   : {state.count_present}")
-    print(f"  LATE      : {state.count_late}")
-    print(f"  INTRUDERS : {state.count_intruder}")
-    print(f"  WRONG-LVL : {state.count_wrong_level}")
+    print(f"  SESSION ENDED  (backend: {backend.name})")
+    print(f"  PRESENT:{state.count_present}  LATE:{state.count_late}  "
+          f"INTRUDER:{state.count_intruder}  WRONG-LVL:{state.count_wrong_level}")
     print("=" * 60 + "\n")
 
 

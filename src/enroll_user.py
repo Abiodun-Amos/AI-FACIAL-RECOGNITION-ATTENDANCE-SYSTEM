@@ -31,19 +31,28 @@ def ask(prompt, allow_empty=False):
 
 
 def wipe_all_users():
-    """Full clean slate: delete all users, datasets, embeddings."""
+    """Full clean slate: delete ALL users, datasets, embeddings —
+    including any orphaned dataset folders not tied to a DB user."""
     users = database.get_all_users()
-    print(f"\n[WIPE] Removing {len(users)} existing user(s) for clean slate...")
-    for u in users:
-        folder = config.DATASET_DIR / str(u["user_id"])
-        if folder.exists():
-            shutil.rmtree(folder)
-        database.delete_embeddings_for_user(u["user_id"])
+    print(f"\n[WIPE] Removing {len(users)} DB user(s) + ALL dataset folders...")
+
+    # Nuke the entire dataset directory contents (catches orphans too)
+    if config.DATASET_DIR.exists():
+        for child in config.DATASET_DIR.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+    # Clear all DB tables related to identity
     with database.get_conn() as conn:
+        conn.execute("DELETE FROM embeddings")
         conn.execute("DELETE FROM attendance")
         conn.execute("DELETE FROM users")
         conn.execute("DELETE FROM sqlite_sequence WHERE name='users'")
-    print("[WIPE] Clean slate ready.\n")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name='embeddings'")
+
+    print("[WIPE] Clean slate ready (datasets + embeddings + users cleared).\n")
 
 
 def get_new_user():

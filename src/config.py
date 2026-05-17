@@ -66,6 +66,13 @@ SFACE_COSINE_THRESHOLD = 0.363
 YUNET_SCORE_THRESHOLD  = 0.85
 YUNET_NMS_THRESHOLD    = 0.30
 
+# ── Liveness (motion-analysis anti-spoofing) ───────────────────
+LIVENESS_ENABLED          = True
+LIVENESS_WINDOW           = 8      # frames of history per face
+# Mean abs pixel diff (0–255 scale) below which a face is deemed
+# tune from observed live-vs-photo scores during testing.
+LIVENESS_MOTION_THRESHOLD = 15.0
+
 # ── Enrollment — guided multi-pose capture ─────────────────────
 ENROLLMENT_POSES = [
     ("FRONTAL", "Look STRAIGHT at the camera"),
