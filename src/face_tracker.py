@@ -35,7 +35,7 @@ class FaceTrack:
         self.history.append(prediction)          # (user_id, confidence)
         self.misses = 0
 
-    def smoothed_prediction(self, min_votes=4):
+    def smoothed_prediction(self, min_votes=5):
         """
         Return the smoothed (user_id, avg_confidence) for this track.
         Requires at least `min_votes` of the history to agree on the

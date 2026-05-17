@@ -38,6 +38,19 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- ════════════════════════════════════════════════════════════
+-- Face Embeddings — DNN (SFace) per-pose vectors
+-- ════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS embeddings (
+    embedding_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL,
+    pose_name     TEXT    NOT NULL,            -- 'FRONTAL'/'LEFT'/...
+    vector        TEXT    NOT NULL,            -- JSON list of 128 floats
+    created_date  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_user ON embeddings(user_id);
+
+-- ════════════════════════════════════════════════════════════
 -- Lecture Halls — one row per physical device location
 -- ════════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS lecture_halls (
@@ -213,6 +226,54 @@ def get_all_courses():
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM courses ORDER BY course_code").fetchall()]
+
+# ── Face Embeddings (DNN) ──────────────────────────────────────
+import json as _json
+
+def add_embedding(user_id, pose_name, vector_list):
+    """Store one pose embedding (a list of 128 floats) for a user."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO embeddings (user_id, pose_name, vector) "
+            "VALUES (?, ?, ?)",
+            (user_id, pose_name, _json.dumps(vector_list))
+        )
+        return cur.lastrowid
+
+
+def get_all_embeddings():
+    """
+    Return every stored embedding as a list of dicts:
+       {user_id, pose_name, vector(list[float])}
+    Used by the DNN recognizer to build its in-memory match set.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_id, pose_name, vector FROM embeddings"
+        ).fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "user_id":   r["user_id"],
+                "pose_name": r["pose_name"],
+                "vector":    _json.loads(r["vector"]),
+            })
+        return result
+
+
+def delete_embeddings_for_user(user_id):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM embeddings WHERE user_id = ?", (user_id,))
+
+
+def count_embeddings_for_user(user_id):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM embeddings WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()
+        return row["n"]
+
 
 # ── Lecture Halls ──────────────────────────────────────────────
 

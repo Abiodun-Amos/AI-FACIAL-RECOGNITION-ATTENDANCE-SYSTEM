@@ -44,7 +44,27 @@ LBPH_RADIUS          = 1
 LBPH_NEIGHBORS       = 8
 LBPH_GRID_X          = 8
 LBPH_GRID_Y          = 8
-CONFIDENCE_THRESHOLD = 70   # below = recognized, above = intruder
+CONFIDENCE_THRESHOLD = 60   # below = recognized, above = intruder
+
+# ── Recognition backend switch ─────────────────────────────────
+# "LBPH" = original documented baseline (Haar + LBPH)
+# "DNN"  = SFace deep-learning embeddings (primary engine)
+RECOGNITION_BACKEND = "DNN"
+
+# ── DNN model paths ────────────────────────────────────────────
+YUNET_MODEL_PATH = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
+SFACE_MODEL_PATH = MODELS_DIR / "face_recognition_sface_2021dec.onnx"
+
+# ── DNN recognition tuning ─────────────────────────────────────
+# SFace uses COSINE similarity: higher = more similar (range ~ -1..1)
+# Faces with cosine similarity ABOVE this are considered the same person.
+# 0.363 is the SFace paper's recommended cosine threshold; we'll
+# calibrate this empirically for your deployment in Chapter 3.
+SFACE_COSINE_THRESHOLD = 0.363
+
+# YuNet detection confidence (0..1)
+YUNET_SCORE_THRESHOLD  = 0.85
+YUNET_NMS_THRESHOLD    = 0.30
 
 # ── Enrollment — guided multi-pose capture ─────────────────────
 ENROLLMENT_POSES = [
