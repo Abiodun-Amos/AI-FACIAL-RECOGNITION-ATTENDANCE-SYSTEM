@@ -478,6 +478,103 @@ def log_intruder(image_path, confidence, session_id=None,
             VALUES (?, ?, ?, ?, ?)
         """, (image_path, confidence, session_id, session_date, hall_id))
         return cur.lastrowid
+    
+# ── Sync-queue helpers (Phase 4 — store-and-forward) ──────────
+
+def get_unsynced_attendance():
+    """All attendance rows not yet pushed to the cloud (synced=0),
+    joined with the context the cloud record will need."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT a.record_id, a.user_id, a.session_id, a.session_date,
+                   a.course_id, a.hall_id, a.timestamp, a.confidence,
+                   a.status,
+                   u.name, u.matric_no, u.user_level,
+                   c.course_code, c.course_name,
+                   h.hall_name
+            FROM attendance a
+            JOIN users u ON a.user_id = u.user_id
+            LEFT JOIN courses c ON a.course_id = c.course_id
+            LEFT JOIN lecture_halls h ON a.hall_id = h.hall_id
+            WHERE a.synced = 0
+            ORDER BY a.timestamp
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_unsynced_intruders():
+    """All intruder rows not yet pushed (synced=0)."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT i.intruder_id, i.session_id, i.session_date, i.hall_id,
+                   i.timestamp, i.image_path, i.image_url, i.confidence,
+                   h.hall_name
+            FROM intruders i
+            LEFT JOIN lecture_halls h ON i.hall_id = h.hall_id
+            WHERE i.synced = 0
+            ORDER BY i.timestamp
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_unsynced_cancellations():
+    """All session cancellations not yet pushed (synced=0)."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT sc.cancellation_id, sc.session_id, sc.cancellation_date,
+                   sc.reason_category, sc.reason_note, sc.cancelled_by,
+                   sc.cancelled_at,
+                   c.course_code
+            FROM session_cancellations sc
+            JOIN sessions s ON sc.session_id = s.session_id
+            JOIN courses  c ON s.course_id   = c.course_id
+            WHERE sc.synced = 0
+            ORDER BY sc.cancelled_at
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_attendance_synced(record_id):
+    """Flip an attendance row to synced=1 — called ONLY after the
+    cloud confirms receipt. This gate is what makes data loss
+    structurally impossible (retention only prunes synced rows)."""
+    with get_conn() as conn:
+        conn.execute("UPDATE attendance SET synced = 1 WHERE record_id = ?",
+                     (record_id,))
+
+
+def mark_intruder_synced(intruder_id, image_url=None):
+    """Flip an intruder row to synced=1, optionally storing the
+    ImgBB URL returned after a successful image upload."""
+    with get_conn() as conn:
+        if image_url is not None:
+            conn.execute(
+                "UPDATE intruders SET synced = 1, image_url = ? "
+                "WHERE intruder_id = ?", (image_url, intruder_id))
+        else:
+            conn.execute("UPDATE intruders SET synced = 1 "
+                         "WHERE intruder_id = ?", (intruder_id,))
+
+
+def mark_cancellation_synced(cancellation_id):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE session_cancellations SET synced = 1 "
+            "WHERE cancellation_id = ?", (cancellation_id,))
+
+
+def sync_queue_summary():
+    """Counts of what's pending sync — for the watchdog's logging
+    and for a quick human 'how much is queued offline?' check."""
+    with get_conn() as conn:
+        a = conn.execute(
+            "SELECT COUNT(*) n FROM attendance WHERE synced=0").fetchone()["n"]
+        i = conn.execute(
+            "SELECT COUNT(*) n FROM intruders WHERE synced=0").fetchone()["n"]
+        c = conn.execute(
+            "SELECT COUNT(*) n FROM session_cancellations "
+            "WHERE synced=0").fetchone()["n"]
+        return {"attendance": a, "intruders": i, "cancellations": c}
 
 # ── Convenience: stand-alone init when run directly ───────────
 if __name__ == "__main__":

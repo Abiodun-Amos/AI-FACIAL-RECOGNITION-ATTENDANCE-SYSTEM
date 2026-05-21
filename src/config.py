@@ -23,6 +23,18 @@ LOGS_DIR        = PROJECT_ROOT / "logs"
 DATABASE_PATH   = DATABASE_DIR / "attendance.db"
 TRAINER_PATH    = TRAINER_DIR / "trainer.yml"
 
+# ── Cloud credentials (gitignored — never commit secrets/) ─────
+SECRETS_DIR        = PROJECT_ROOT / "secrets"
+FIREBASE_KEY_PATH  = SECRETS_DIR / "firebase_key.json"
+IMGBB_KEY_PATH     = SECRETS_DIR / "imgbb_key.txt"
+
+# ── Cloud sync tuning ──────────────────────────────────────────
+SYNC_CHECK_INTERVAL   = 30     # seconds between connectivity checks
+SYNC_CONNECT_TIMEOUT  = 5      # seconds before deciding "offline"
+FIRESTORE_COLLECTION_ATTENDANCE   = "attendance"
+FIRESTORE_COLLECTION_INTRUDERS    = "intruders"
+FIRESTORE_COLLECTION_CANCELLATIONS = "cancellations"
+
 # ── Device location ────────────────────────────────────────────
 # This Orange Pi is physically deployed in this lecture hall.
 # Only sessions assigned to this hall will be considered active.

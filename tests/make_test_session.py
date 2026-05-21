@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from src import config, database
 
 DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-TEST_COURSE_CODE = "TESTING101"
+TEST_COURSE_CODE = "TESTingg101"
 
 
 def _ensure_prereqs():
