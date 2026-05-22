@@ -105,3 +105,165 @@ def is_online():
         return True
     except Exception:
         return False
+    
+# ── Reference data sync ────────────────────────────────────────
+
+def push_reference_data():
+    """
+    Push all device-side reference data to Firestore so the
+    dashboard can read it without hitting the local SQLite.
+    Uses .set() (upsert) so re-running is safe and idempotent.
+    Called by the sync engine after each cycle.
+    """
+    from src import database as _db_mod
+    _init()
+
+    # Users
+    users = _db_mod.get_all_users()
+    for u in users:
+        _db.collection("users").document(
+            f"user_{u['user_id']}").set({
+            "user_id":         u["user_id"],
+            "name":            u["name"],
+            "matric_no":       u["matric_no"],
+            "user_level":      u["user_level"],
+            "registered_date": u["registered_date"],
+        })
+
+    # Courses
+    courses = _db_mod.get_all_courses()
+    for c in courses:
+        _db.collection("courses").document(
+            f"course_{c['course_id']}").set({
+            "course_id":    c["course_id"],
+            "course_code":  c["course_code"],
+            "course_name":  c["course_name"],
+            "course_level": c["course_level"],
+        })
+
+    # Lecturers
+    lecturers = _db_mod.get_all_lecturers()
+    for l in lecturers:
+        _db.collection("lecturers").document(
+            f"lec_{l['lecturer_id']}").set({
+            "lecturer_id":  l["lecturer_id"],
+            "full_name":    l["full_name"],
+            "staff_id":     l["staff_id"],
+            "department":   l["department"],
+            "email":        l["email"],
+            "phone":        l["phone"],
+        })
+
+    # Halls
+    halls = _db_mod.get_all_halls()
+    for h in halls:
+        _db.collection("halls").document(
+            f"hall_{h['hall_id']}").set({
+            "hall_id":   h["hall_id"],
+            "hall_name": h["hall_name"],
+            "building":  h["building"],
+            "capacity":  h["capacity"],
+        })
+
+    # Sessions (denormalised — dashboard doesn't need JOINs)
+    sessions = _db_mod.get_all_sessions()
+    for s in sessions:
+        _db.collection("sessions").document(
+            f"session_{s['session_id']}").set({
+            "session_id":    s["session_id"],
+            "day_of_week":   s["day_of_week"],
+            "start_time":    s["start_time"],
+            "end_time":      s["end_time"],
+            "grace_minutes": s["grace_minutes"],
+            "course_id":     s["course_id"],
+            "course_code":   s["course_code"],
+            "course_name":   s["course_name"],
+            "course_level":  s["course_level"],
+            "lecturer_id":   s["lecturer_id"],
+            "lecturer_name": s["lecturer_name"],
+            "hall_id":       s["hall_id"],
+            "hall_name":     s["hall_name"],
+        })
+
+    return {
+        "users": len(users), "courses": len(courses),
+        "lecturers": len(lecturers), "halls": len(halls),
+        "sessions": len(sessions),
+    }
+
+
+# ── Management commands (dashboard → Orange Pi) ────────────────
+
+import uuid as _uuid
+import datetime as _dt
+
+MGMT_COLLECTION = "management_commands"
+
+MGMT_TYPES = {
+    "ADD_COURSE",
+    "ADD_LECTURER",
+    "ADD_SESSION",
+    "UPDATE_SESSION",
+    "DELETE_SESSION",
+    "PRE_REGISTER_USER",
+    "CANCEL_SESSION",
+}
+
+
+def write_management_command(cmd_type, payload, created_by="web_admin"):
+    """
+    Write a management command to Firestore.
+    The reverse sync watcher on the Orange Pi polls this collection
+    and applies pending commands to local SQLite.
+
+    cmd_type must be one of MGMT_TYPES.
+    payload is a dict of command-specific data.
+
+    Returns the command document ID.
+    """
+    _init()
+    if cmd_type not in MGMT_TYPES:
+        raise ValueError(f"Unknown command type: {cmd_type}")
+
+    cmd_id = str(_uuid.uuid4())
+    doc = {
+        "cmd_id":      cmd_id,
+        "type":        cmd_type,
+        "payload":     payload,
+        "status":      "pending",
+        "created_at":  _dt.datetime.now().isoformat(),
+        "created_by":  created_by,
+        "processed_at": None,
+        "error":        None,
+    }
+    _db.collection(MGMT_COLLECTION).document(cmd_id).set(doc)
+    return cmd_id
+
+
+def get_pending_commands():
+    """Fetch all pending management commands, oldest first.
+    Called by the reverse sync watcher on the Orange Pi.
+
+    Sorting is done in Python rather than Firestore to avoid
+    requiring a composite index on (status, created_at) —
+    appropriate given the low expected volume of pending commands.
+    """
+    _init()
+    from google.cloud.firestore_v1.base_query import FieldFilter
+    docs = (_db.collection(MGMT_COLLECTION)
+               .where(filter=FieldFilter("status", "==", "pending"))
+               .stream())
+    commands = [d.to_dict() for d in docs]
+    # Sort oldest-first in Python — no composite index needed
+    return sorted(commands, key=lambda x: x.get("created_at", ""))
+
+
+def mark_command_processed(cmd_id, success=True, error=None):
+    """Mark a command as processed (or failed) after the Orange Pi
+    has applied it to local SQLite."""
+    _init()
+    _db.collection(MGMT_COLLECTION).document(cmd_id).update({
+        "status":       "processed" if success else "failed",
+        "processed_at": _dt.datetime.now().isoformat(),
+        "error":        error,
+    })

@@ -164,6 +164,14 @@ def run_sync_cycle():
     _log(f"Cycle done — pushed: {pushed}, failed: {failed}")
     if failed > 0:
         _log(f"{failed} record(s) will retry next cycle.", "WARN")
+
+    # Push reference data (users, courses, sessions, etc.) to Firestore
+    # so the dashboard can read them. Idempotent — safe to run every cycle.
+    try:
+        counts = cf.push_reference_data()
+        _log(f"Reference data synced: {counts}")
+    except Exception as e:
+        _log(f"Reference data sync failed: {e}", "WARN")
     return {"pushed": pushed, "failed": failed}
 
 

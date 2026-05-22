@@ -44,17 +44,17 @@ def main():
         print(f"    intruder={r['intruder_id']}  {r['timestamp']}  "
               f"{r['image_path']}")
 
-    # Simulate a successful cloud sync of the first attendance record
+    # Show what the sync engine WOULD do — without touching the database.
     if att:
-        first = att[0]["record_id"]
-        print(f"\n  [SIM] Marking attendance record {first} as synced "
-              f"(simulating successful cloud push)...")
-        database.mark_attendance_synced(first)
-        new_summary = database.sync_queue_summary()
-        print(f"  [SIM] Pending attendance now: "
-              f"{new_summary['attendance']} (was {summary['attendance']})")
-        print("  [SIM] This is exactly what the real sync engine will do,")
-        print("        but only AFTER the cloud confirms receipt.")
+        first = att[0]
+        print(f"\n  [INFO] When the sync engine runs, it will push:")
+        print(f"         record={first['record_id']}  "
+              f"{first['name']}  {first['course_code'] or '-'}  "
+              f"{first['status']}")
+        print(f"         → to Firestore as 'att_{first['record_id']}'")
+        print(f"         → then mark it synced=1 in SQLite")
+        print(f"\n  [INFO] Run: python -m src.sync_engine --once")
+        print(f"         to perform the actual push.")
 
     print("\n" + "=" * 55)
     print("  Queue logic verified — no cloud needed yet.")

@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FRAS — Admin Dashboard</title>
+
+<!-- Fonts: Syne (authority) + JetBrains Mono (technical data) -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!-- Stylesheet -->
+<link rel="stylesheet" href="style.css">
+
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<!-- Firebase SDK (compat v10) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     SIDEBAR
+══════════════════════════════════════════ -->
+<aside class="sidebar">
+
+  <!-- Brand -->
+  <div class="brand">
+    <div class="brand-icon">🎓</div>
+    <div class="brand-name">FRAS</div>
+    <div class="brand-sub">Face Recognition Attendance</div>
+  </div>
+
+  <!-- Navigation -->
+  <div class="nav-section">
+    <div class="nav-label">Monitor</div>
+    <div class="nav-item active" onclick="navigate('overview')">
+      <span class="icon">⬡</span> Overview
+    </div>
+    <div class="nav-item" onclick="navigate('attendance')">
+      <span class="icon">✓</span> Attendance
+    </div>
+    <div class="nav-item" onclick="navigate('intruders')">
+      <span class="icon">⚠</span> Intruder Alerts
+      <span class="nav-badge" id="intruder-badge" style="display:none">0</span>
+    </div>
+    <div class="nav-item" onclick="navigate('analytics')">
+      <span class="icon">◈</span> Analytics
+    </div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-label">Manage</div>
+    <div class="nav-item" onclick="navigate('students')">
+      <span class="icon">◉</span> Students
+    </div>
+    <div class="nav-item" onclick="navigate('timetable')">
+      <span class="icon">▤</span> Timetable
+    </div>
+    <div class="nav-item" onclick="navigate('lecturers')">
+      <span class="icon">◎</span> Lecturers
+    </div>
+    <div class="nav-item" onclick="navigate('cancellations')">
+      <span class="icon">✕</span> Cancellations
+    </div>
+  </div>
+
+  <!-- Live clock indicator -->
+  <div class="live-indicator">
+    <div class="live-dot-row">
+      <div class="live-dot"></div> SYSTEM LIVE
+    </div>
+    <div class="live-time" id="clock">--:--:--</div>
+    <div class="live-date" id="clock-date">---</div>
+  </div>
+
+</aside>
+
+<!-- ══════════════════════════════════════════
+     MAIN CONTENT
+══════════════════════════════════════════ -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="page-title" id="page-title">Live <span>Overview</span></div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" onclick="refreshAll()">↺ Refresh</button>
+      <button class="btn btn-amber" id="topbar-action" onclick="topbarAction()">
+        ⬇ Export CSV
+      </button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ── PAGE: Overview ─────────────────────────── -->
+    <div class="page active" id="page-overview">
+
+      <!-- Stat cards -->
+      <div class="stat-grid">
+        <div class="stat-card green">
+          <div class="stat-label">Present Today</div>
+          <div class="stat-value" id="ov-present">—</div>
+          <div class="stat-sub">across all sessions</div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-label">Late Arrivals</div>
+          <div class="stat-value" id="ov-late">—</div>
+          <div class="stat-sub">within grace period</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-label">Intruder Alerts</div>
+          <div class="stat-value" id="ov-intruders">—</div>
+          <div class="stat-sub">today</div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-label">Attendance Rate</div>
+          <div class="stat-value" id="ov-rate">—</div>
+          <div class="stat-sub" id="ov-rate-sub">—</div>
+        </div>
+      </div>
+
+      <!-- Today's sessions -->
+      <div class="section-head">
+        <div class="section-title">Today's Sessions</div>
+      </div>
+      <div class="table-wrap" id="ov-sessions-wrap">
+        <div class="loader"><div class="spinner"></div> Loading sessions...</div>
+      </div>
+
+      <!-- Recent attendance -->
+      <div class="section-head" style="margin-top:24px">
+        <div class="section-title">Recent Attendance</div>
+      </div>
+      <div class="table-wrap" id="ov-recent-wrap">
+        <div class="loader"><div class="spinner"></div> Loading...</div>
+      </div>
+
+    </div><!-- end page-overview -->
+
+
+    <!-- ── PAGE: Attendance ───────────────────────── -->
+    <div class="page" id="page-attendance">
+      <div class="filter-row">
+        <input type="date" id="att-date-filter" style="width:180px;"
+               onchange="loadAttendance()">
+        <select id="att-course-filter" onchange="loadAttendance()"
+                style="width:200px;">
+          <option value="">All Courses</option>
+        </select>
+        <select id="att-status-filter" onchange="loadAttendance()"
+                style="width:140px;">
+          <option value="">All Status</option>
+          <option value="PRESENT">Present</option>
+          <option value="LATE">Late</option>
+        </select>
+      </div>
+      <div class="table-wrap" id="att-table-wrap">
+        <div class="loader"><div class="spinner"></div> Loading...</div>
+      </div>
+    </div>
+
+
+    <!-- ── PAGE: Intruder Alerts ──────────────────── -->
+    <div class="page" id="page-intruders">
+      <div class="filter-row">
+        <input type="date" id="int-date-filter" style="width:180px;"
+               onchange="loadIntruders()">
+      </div>
+      <div id="intruder-gallery">
+        <div class="loader"><div class="spinner"></div> Loading alerts...</div>
+      </div>
+    </div>
+
+
+    <!-- ── PAGE: Analytics ───────────────────────── -->
+    <div class="page" id="page-analytics">
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">Attendance by Course (Today)</div>
+          <div class="chart-container">
+            <canvas id="chart-courses"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">PRESENT vs LATE Distribution</div>
+          <div class="chart-container">
+            <canvas id="chart-status"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Attendance Trend (Last 7 Days)</div>
+        <div class="chart-container" style="height:260px;">
+          <canvas id="chart-trend"></canvas>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ── PAGE: Students ────────────────────────── -->
+    <div class="page" id="page-students">
+      <div class="panel">
+        <div class="panel-title">
+          🎓 Pre-Register Student
+          <span class="panel-title-note">
+            (face capture required at the device after)
+          </span>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input id="s-name" placeholder="e.g. Abiodun Amos" type="text">
+          </div>
+          <div class="form-group">
+            <label>Matric Number</label>
+            <input id="s-matric" placeholder="e.g. EES/21/22/0011" type="text">
+          </div>
+          <div class="form-group">
+            <label>Academic Level</label>
+            <select id="s-level">
+              <option value="100">100 Level</option>
+              <option value="200">200 Level</option>
+              <option value="300">300 Level</option>
+              <option value="400">400 Level</option>
+              <option value="500" selected>500 Level</option>
+              <option value="600">600 Level</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-amber" onclick="preRegisterStudent()">
+          + Pre-Register Student
+        </button>
+      </div>
+
+      <div class="section-head">
+        <div class="section-title">Enrolled Students</div>
+      </div>
+      <div class="table-wrap" id="students-table-wrap">
+        <div class="loader"><div class="spinner"></div> Loading...</div>
+      </div>
+    </div>
+
+
+    <!-- ── PAGE: Timetable ───────────────────────── -->
+    <div class="page" id="page-timetable">
+      <div class="panel">
+        <div class="panel-title">📅 Add Session</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Course</label>
+            <select id="tt-course">
+              <option value="">Select course...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Lecturer</label>
+            <select id="tt-lecturer">
+              <option value="">Select lecturer...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Day of Week</label>
+            <select id="tt-day">
+              <option value="MON">Monday</option>
+              <option value="TUE">Tuesday</option>
+              <option value="WED">Wednesday</option>
+              <option value="THU">Thursday</option>
+              <option value="FRI">Friday</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Grace Period (minutes)</label>
+            <input id="tt-grace" type="number" value="60" min="0" max="120">
+          </div>
+          <div class="form-group">
+            <label>Start Time</label>
+            <input id="tt-start" type="time" value="08:00">
+          </div>
+          <div class="form-group">
+            <label>End Time</label>
+            <input id="tt-end" type="time" value="10:00">
+          </div>
+        </div>
+        <button class="btn btn-amber" onclick="addSession()">
+          + Add Session
+        </button>
+      </div>
+
+      <div class="section-head">
+        <div class="section-title">Weekly Timetable</div>
+      </div>
+      <div class="table-wrap" id="timetable-table-wrap">
+        <div class="loader"><div class="spinner"></div> Loading...</div>
+      </div>
+    </div>
+
+
+    <!-- ── PAGE: Lecturers ───────────────────────── -->
+    <div class="page" id="page-lecturers">
+      <div class="panel">
+        <div class="panel-title">👤 Add Lecturer</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input id="l-name" placeholder="e.g. Engr. Frank Onaifo" type="text">
+          </div>
+          <div class="form-group">
+            <label>Staff ID</label>
+            <input id="l-staffid" placeholder="e.g. OOU/EEE/045" type="text">
+          </div>
+          <div class="form-group">
+            <label>Department</label>
+            <input id="l-dept" type="text"
+                   placeholder="Electrical Electronics"
+                   value="Electrical Electronics">
+          </div>
+          <div class="form-group">
+            <label>Email (optional)</label>
+            <input id="l-email" placeholder="lecturer@oou.edu.ng" type="email">
+          </div>
+          <div class="form-group">
+            <label>Phone (optional)</label>
+            <input id="l-phone" placeholder="+234..." type="text">
+          </div>
+        </div>
+        <button class="btn btn-amber" onclick="addLecturer()">
+          + Add Lecturer
+        </button>
+      </div>
+
+      <div class="section-head">
+        <div class="section-title">All Lecturers</div>
+      </div>
+      <div class="table-wrap" id="lecturers-table-wrap">
+        <div class="loader"><div class="spinner"></div> Loading...</div>
+      </div>
+    </div>
+
+
+    <!-- ── PAGE: Cancellations ───────────────────── -->
+    <div class="page" id="page-cancellations">
+      <div class="panel">
+        <div class="panel-title">✕ Cancel a Session</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Session</label>
+            <select id="can-session">
+              <option value="">Select session...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Date</label>
+            <input id="can-date" type="date">
+          </div>
+          <div class="form-group">
+            <label>Reason</label>
+            <select id="can-reason">
+              <option value="INSTITUTIONAL">On institutional assignment</option>
+              <option value="LEAVE">On leave</option>
+              <option value="HEALTH">Health reasons</option>
+              <option value="HOLIDAY">Public / institution holiday</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Cancelled By</label>
+            <input id="can-by" placeholder="Lecturer name or ADMIN" type="text">
+          </div>
+          <div class="form-group full">
+            <label>Note (optional)</label>
+            <input id="can-note" placeholder="Additional detail..." type="text">
+          </div>
+        </div>
+        <button class="btn btn-danger" onclick="cancelSession()">
+          Cancel Session
+        </button>
+      </div>
+
+      <div class="section-head">
+        <div class="section-title">Upcoming Cancellations</div>
+      </div>
+      <div class="table-wrap" id="cancellations-table-wrap">
+        <div class="loader"><div class="spinner"></div> Loading...</div>
+      </div>
+    </div>
+
+  </div><!-- end .content -->
+</div><!-- end .main -->
+
+
+<!-- ── Toast notification ─────────────────────────────── -->
+<div id="toast"></div>
+
+<!-- ── Modal: intruder full-size view ─────────────────── -->
+<div class="modal-overlay" id="intruder-modal"
+     onclick="closeIntruderModal(event)">
+  <div class="modal" style="text-align:center;">
+    <img id="intruder-modal-img" src="" alt="Intruder snapshot"
+         style="max-width:100%;border-radius:8px;margin-bottom:16px;">
+    <div id="intruder-modal-meta"
+         style="font-family:var(--font-data);font-size:12px;
+                color:var(--text-dim);"></div>
+    <div class="modal-actions" style="justify-content:center;">
+      <button class="btn btn-ghost"
+              onclick="closeIntruderModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Application script ─────────────────────────────── -->
+<script src="app.js"></script>
+
+</body>
+</html>

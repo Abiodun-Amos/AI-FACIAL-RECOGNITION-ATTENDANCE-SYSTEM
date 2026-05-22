@@ -575,6 +575,28 @@ def sync_queue_summary():
             "SELECT COUNT(*) n FROM session_cancellations "
             "WHERE synced=0").fetchone()["n"]
         return {"attendance": a, "intruders": i, "cancellations": c}
+    
+# ── Reference data queries (for Firestore sync) ────────────────
+
+def get_all_sessions():
+    """All active sessions with denormalised course/lecturer/hall info."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT s.session_id, s.day_of_week, s.start_time,
+                   s.end_time, s.grace_minutes, s.active,
+                   c.course_id, c.course_code, c.course_name,
+                   c.course_level,
+                   l.lecturer_id, l.full_name AS lecturer_name,
+                   l.staff_id, l.email, l.phone, l.department,
+                   h.hall_id, h.hall_name
+            FROM sessions s
+            JOIN courses       c ON s.course_id   = c.course_id
+            JOIN lecturers     l ON s.lecturer_id = l.lecturer_id
+            JOIN lecture_halls h ON s.hall_id     = h.hall_id
+            WHERE s.active = 1
+            ORDER BY s.day_of_week, s.start_time
+        """).fetchall()
+        return [dict(r) for r in rows]
 
 # ── Convenience: stand-alone init when run directly ───────────
 if __name__ == "__main__":
