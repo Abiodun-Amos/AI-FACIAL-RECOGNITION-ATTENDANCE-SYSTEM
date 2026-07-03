@@ -784,6 +784,32 @@ async function addSession() {
   }
 }
 
+async function addCourse() {
+  const code  = document.getElementById('c-code').value.trim().toUpperCase();
+  const name  = document.getElementById('c-name').value.trim();
+  const level = parseInt(document.getElementById('c-level').value);
+
+  if (!code || !name) {
+    toast('Course code and name are required', 'error');
+    return;
+  }
+
+  try {
+    await writeCommand('ADD_COURSE', {
+      course_code:  code,
+      course_name:  name,
+      course_level: level,
+    });
+    toast(`Course ${code} sent ✓ — run reverse sync on device to apply.`,
+          'success');
+    document.getElementById('c-code').value = '';
+    document.getElementById('c-name').value = '';
+    // Refresh the page so the new course appears in the Add Session dropdown
+    setTimeout(loadTimetable, 1500);
+  } catch(e) {
+    toast(`Error: ${e.message}`, 'error');
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // PAGE: LECTURERS

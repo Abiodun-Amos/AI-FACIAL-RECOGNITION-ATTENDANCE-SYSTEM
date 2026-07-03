@@ -289,6 +289,37 @@
         </button>
       </div>
 
+      <!-- ── Add Course panel ───────────────────────── -->
+      <div class="panel">
+        <div class="panel-title">📘 Add Course</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Course Code</label>
+            <input id="c-code" placeholder="e.g. EES501" type="text"
+                  style="text-transform:uppercase;">
+          </div>
+          <div class="form-group">
+            <label>Course Name</label>
+            <input id="c-name" placeholder="e.g. Power Systems Analysis"
+                  type="text">
+          </div>
+          <div class="form-group">
+            <label>Academic Level</label>
+            <select id="c-level">
+              <option value="100">100 Level</option>
+              <option value="200">200 Level</option>
+              <option value="300">300 Level</option>
+              <option value="400">400 Level</option>
+              <option value="500" selected>500 Level</option>
+              <option value="600">600 Level</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-amber" onclick="addCourse()">
+          + Add Course
+        </button>
+      </div>
+
       <div class="section-head">
         <div class="section-title">Weekly Timetable</div>
       </div>
@@ -305,11 +336,11 @@
         <div class="form-grid">
           <div class="form-group">
             <label>Full Name</label>
-            <input id="l-name" placeholder="e.g. Engr. Frank Onaifo" type="text">
+            <input id="l-name" placeholder="e.g. Engr. Abiodun Amos" type="text">
           </div>
           <div class="form-group">
             <label>Staff ID</label>
-            <input id="l-staffid" placeholder="e.g. OOU/EEE/045" type="text">
+            <input id="l-staffid" placeholder="e.g. OOU/EEE/0011" type="text">
           </div>
           <div class="form-group">
             <label>Department</label>
